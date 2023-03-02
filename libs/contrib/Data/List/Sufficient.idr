@@ -9,24 +9,54 @@
 ||| Credited by Conor McBride as originally due to James McKinna
 module Data.List.Sufficient
 
-||| Sufficient view
-public export
-data Sufficient : (xs : List a) -> Type where
-  SuffAcc : {xs : List a}
-          -> (suff_ih : {x : a} -> {pre, suff : List a}
-                      -> xs = x :: (pre ++ suff)
-                      -> Sufficient suff)
-          -> Sufficient xs
+import Control.WellFounded
 
-||| Sufficient view covering property
-export
-sufficient : (xs : List a) -> Sufficient xs
-sufficient []        = SuffAcc (\case _ impossible)
-sufficient (x :: xs) with (sufficient xs)
-  sufficient (x :: xs) | suffxs@(SuffAcc suff_ih)
-    = SuffAcc (\case Refl => prf Refl)
-    where prf : {pre, suff : List a}
-              -> xs = pre ++ suff
-              -> Sufficient suff
-          prf {pre = []} Refl = suffxs
-          prf {pre = (y :: ys)} eq = suff_ih eq
+%default total
+
+public export
+data Suffix : (ys,xs : List a) -> Type where
+  IsSuffix : (x : a) -> (zs : List a)
+          -> (0 ford : xs = x :: zs ++ ys) -> Suffix ys xs
+
+SuffixAccessible : (xs : List a) -> Accessible Suffix xs
+SuffixAccessible [] = Access (\y => \case (IsSuffix x zs _) impossible)
+SuffixAccessible ws@(x :: xs) =
+  let fact1@(Access f) = SuffixAccessible xs
+  in Access $ \ys => \case
+    (IsSuffix x [] Refl) => fact1
+    (IsSuffix x (z :: zs) Refl) => f ys (IsSuffix z zs Refl)
+
+public export
+WellFounded (List a) Suffix where
+  wellFounded = SuffixAccessible
+
+public export
+SuffAcc : (a : Type) -> (p : List a -> Type) -> (xs : List a) -> Type
+SuffAcc a p xs = {x : _} -> (pre : _) -> (suffix : _) -> (xs = x :: pre ++ suffix) -> p suffix
+
+public export
+SuffRec : (a : Type) -> (p : List a -> Type) -> (ys : List a) -> Type
+SuffRec a p ys = (ih : SuffAcc a p ys) -> p ys
+
+public export
+SuffCovered : (a : Type)-> (p : List a -> Type)
+            -> (rp : (xs : List a) -> p xs -> Type) 
+            -> (xs : List a) -> (suf : SuffAcc a p xs) -> Type
+
+SuffCovered a p rp xs suf =
+  {x : _} -> {pre : _} -> (suffix : _) ->
+  (eq : xs = x :: pre ++ suffix) -> rp suffix (suf pre suffix eq)
+
+parameters (A : Type) (B : List A -> Type) (rec : (ys : List A) -> SuffRec A B ys)
+  suffRec : (zs : List A) -> B zs
+  suffRec = wfInd {a = List A, rel = Suffix} $ \xs,rec' =>
+    rec xs (\pre,ys,ford => rec' ys $ IsSuffix _ _ ford)
+
+  parameters (C : (xs : List A) -> B xs -> Type)
+             (ih : (xs : List A) -> (suf : SuffAcc A B xs)
+                 -> SuffCovered A B C xs suf -> C xs (rec xs suf))
+    suffInd : (xs : List A) -> C xs (suffRec xs)
+    suffInd xs =
+      wfIndProp {a = List A, rel = Suffix, P = B, RP = C} _
+        (\xs,rec',ih' => ih xs _ (\suff,Refl => ih' suff (IsSuffix _ _ Refl)))
+        xs
